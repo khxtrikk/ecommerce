@@ -1,0 +1,44 @@
+name: Build and deploy frontend + backend
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Build client
+        working-directory: client
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Prepare deploy key
+        run: |
+          echo "${{ secrets.DEPLOY_PRIVATE_KEY }}" > deploy_key
+          chmod 600 deploy_key
+
+      - name: Upload frontend build to frontend server
+        run: |
+          # change client/dist/ to client/build/ if your build output is build/
+          rsync -avz -e "ssh -i deploy_key -o StrictHostKeyChecking=no" client/dist/ ubuntu@${{ secrets.FRONTEND_HOST }}:/home/ubuntu/build_upload/
+
+      - name: Move build to webroot & reload nginx (frontend)
+        run: |
+          ssh -i deploy_key -o StrictHostKeyChecking=no ubuntu@${{ secrets.FRONTEND_HOST }} "sudo rm -rf /var/www/ecommerce/* && sudo mv /home/ubuntu/build_upload/* /var/www/ecommerce/ && sudo chown -R www-data:www-data /var/www/ecommerce && sudo nginx -t && sudo systemctl reload nginx || true"
+
+      - name: Deploy backend (pull & restart pm2)
+        run: |
+          ssh -i deploy_key -o StrictHostKeyChecking=no ubuntu@${{ secrets.BACKEND_HOST }} "bash ~/deploy_backend.sh"
